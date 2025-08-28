@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+celery
+redis
+crewai
+langchain-google-genai
+requests
+python-dotenv
+pydantic
