@@ -3,20 +3,9 @@ from crewai import Agent, Task, Crew, Process
 from github_service import get_pr_diff
 
 def create_code_review_crew(repo_url: str, pr_number: int):
-    """
-    Creates and configures the CrewAI crew for code review.
 
-    Args:
-        repo_url: The URL of the repository.
-        pr_number: The pull request number.
-
-    Returns:
-        An instance of the CrewAI Crew.
-    """
-    # Fetch the PR diff first
     pr_diff = get_pr_diff(repo_url, pr_number)
 
-    # Define the Code Review Agent - using string for LLM like in your working project
     code_reviewer_agent = Agent(
         role="Senior Software Engineer and Code Review Specialist",
         goal=f"Analyze the code changes in the pull request #{pr_number} for the repository {repo_url} and provide a detailed review.",
@@ -26,11 +15,11 @@ def create_code_review_crew(repo_url: str, pr_number: int):
             "and common pitfalls. Your task is to perform a thorough code review of a given pull request diff."
         ),
         verbose=True,
-        llm="gemini/gemini-1.5-flash",  # Using string format like your working project
+        llm="gemini/gemini-1.5-flash",
         allow_delegation=False,
         max_rpm=10,
         max_retry_limit=3,
-        request_timeout=120
+        #request_timeout=120
     )
 
 
@@ -74,7 +63,7 @@ def create_code_review_crew(repo_url: str, pr_number: int):
         agents=[code_reviewer_agent],
         tasks=[review_task],
         process=Process.sequential,
-        verbose=2
+        verbose=True
     )
 
     return code_review_crew
