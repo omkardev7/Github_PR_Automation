@@ -7,3 +7,7 @@ langchain-google-genai
 requests
 python-dotenv
 pydantic
+gevent
+pytest 
+pytest-asyncio 
+httpx

@@ -1,14 +1,18 @@
 import json
-import os
-from typing import Optional
 from celery import Celery
 from celery.result import AsyncResult
+from pydantic import ValidationError
+
 from config import REDIS_URL
 from agents import create_code_review_crew
+from models import FinalReport
+from logger_config import setup_logger, log_function_start, log_function_end, log_step
+
+
+logger = setup_logger(__name__)
 
 # Initialize Celery
 celery_app = Celery('code_review_worker')
-
 celery_app.conf.update(
     broker_url=REDIS_URL,
     result_backend=REDIS_URL,
@@ -20,81 +24,141 @@ celery_app.conf.update(
     task_track_started=True
 )
 
-@celery_app.task(bind=True)
-def analyze_pr_task(self, repo_url: str, pr_number: int, github_token: Optional[str] = None):
 
+def clean_llm_output(text: str) -> str:
+    
+    log_function_start(logger, "clean_llm_output", text_length=len(text))
+    
     try:
-        self.update_state(state='PROGRESS', meta={'current': 0, 'total': 100, 'status': 'Starting analysis...'})
+        text = text.strip()
+        if text.startswith('```json'):
+            text = text[7:]
+        elif text.startswith('```'):
+            text = text[3:]
         
-        # Create and run the CrewAI crew
-        review_crew = create_code_review_crew(repo_url, pr_number)
+        if text.endswith('```'):
+            text = text[:-3]
+            
+        cleaned_text = text.strip()
         
-        self.update_state(state='PROGRESS', meta={'current': 50, 'total': 100, 'status': 'Running CrewAI analysis...'})
+        log_function_end(logger, "clean_llm_output", 
+                        original_length=len(text), 
+                        cleaned_length=len(cleaned_text))
         
-        result = review_crew.kickoff()
+        return cleaned_text
         
-        self.update_state(state='PROGRESS', meta={'current': 90, 'total': 100, 'status': 'Processing results...'})
+    except Exception as e:
+        logger.error(f"Error cleaning LLM output: {e}")
+        log_function_end(logger, "clean_llm_output", success=False, error=str(e))
+        return text  # Return original text if cleaning fails
+
+
+def parse_and_validate_result(raw_result: str) -> dict:
+    
+    log_function_start(logger, "parse_and_validate_result", result_length=len(raw_result))
+    
+    try:
+        # Clean the raw output
+        log_step(logger, "Cleaning LLM output")
+        cleaned_result = clean_llm_output(raw_result)
         
-        
-        result_text = ""
-        
-        
-        if hasattr(result, 'raw'):
-            result_text = result.raw
-        elif isinstance(result, str):
-            result_text = result
-        else:
-            result_text = str(result)
-        
-        
-        result_text = result_text.strip()
-        if result_text.startswith('```json'):
-            result_text = result_text[7:]  
-        if result_text.startswith('```'):
-            result_text = result_text[3:]   
-        if result_text.endswith('```'):
-            result_text = result_text[:-3]  
-        
-        result_text = result_text.strip()
-        
-        
+        # Parse JSON
+        log_step(logger, "Parsing JSON")
         try:
-            parsed_result = json.loads(result_text)
-            return parsed_result
-        except json.JSONDecodeError as json_error:
-            print(f"JSON parsing error: {json_error}")
-            print(f"Raw result text: {result_text[:500]}...")
-            
-            
+            parsed_json = json.loads(cleaned_result)
+            log_step(logger, "JSON parsed successfully", keys=list(parsed_json.keys()) if isinstance(parsed_json, dict) else "not_dict")
+        except json.JSONDecodeError as e:
+            error_message = f"Failed to parse AI response as JSON. Error: {e}"
+            logger.error(error_message)
+            log_function_end(logger, "parse_and_validate_result", success=False, error="JSON_DECODE_ERROR")
             return {
-                "files": [],
-                "summary": {
-                    "total_files": 0,
-                    "total_issues": 0,
-                    "critical_issues": 0
-                },
-                "error": f"Failed to parse AI response as JSON: {str(json_error)}",
-                "raw_response": result_text[:2000]  # Include first 1000 chars of response
+                "error": error_message,
+                "raw_response": cleaned_result[:1000]  # Include snippet for debugging
+            }
+
+        # Validate with Pydantic
+        log_step(logger, "Validating with Pydantic model")
+        try:
+            validated_report = FinalReport.model_validate(parsed_json)
+            result = validated_report.model_dump()
+            
+            log_function_end(logger, "parse_and_validate_result", 
+                            files_count=len(result.get('files', [])),
+                            total_issues=result.get('summary', {}).get('total_issues', 0))
+            
+            return result
+            
+        except ValidationError as e:
+            error_message = f"AI response failed Pydantic validation. Error: {e}"
+            logger.error(error_message)
+            log_function_end(logger, "parse_and_validate_result", success=False, error="VALIDATION_ERROR")
+            return {
+                "error": error_message,
+                "raw_response": parsed_json
             }
             
     except Exception as e:
+        error_message = f"Unexpected error during parsing and validation: {e}"
+        logger.error(error_message)
+        log_function_end(logger, "parse_and_validate_result", success=False, error="UNEXPECTED_ERROR")
+        return {
+            "error": error_message,
+            "exception_type": type(e).__name__
+        }
+
+
+@celery_app.task(bind=True)
+def analyze_pr_task(self, repo_url: str, pr_number: int):
+    
+    task_id = self.request.id
+    log_function_start(logger, "analyze_pr_task", 
+                      task_id=task_id, repo_url=repo_url, pr_number=pr_number)
+    
+    try:
+        log_step(logger, "Updating task state to PROGRESS - Initializing")
+        self.update_state(state='PROGRESS', meta={'status': 'Initializing multi-agent crew...'})
         
+        log_step(logger, "Creating code review crew")
+        review_crew = create_code_review_crew(repo_url, pr_number)
+        
+        log_step(logger, "Updating task state to PROGRESS - Running analysis")
+        self.update_state(state='PROGRESS', meta={'status': 'Running specialized agent analysis...'})
+        
+        log_step(logger, "Executing CrewAI crew")
+        result = review_crew.kickoff()
+        
+        log_step(logger, "Updating task state to PROGRESS - Validating")
+        self.update_state(state='PROGRESS', meta={'status': 'Validating final report...'})
+        
+        log_step(logger, "Processing crew result")
+        final_result = parse_and_validate_result(result.raw)
+        
+        if 'error' in final_result:
+            log_function_end(logger, "analyze_pr_task", success=False, 
+                           error_type=final_result.get('error', 'Unknown'))
+            return final_result
+        
+        log_function_end(logger, "analyze_pr_task", 
+                        files_analyzed=len(final_result.get('files', [])),
+                        total_issues=final_result.get('summary', {}).get('total_issues', 0))
+        
+        return final_result
+        
+    except Exception as e:
         error_msg = f"Task failed for PR {repo_url}#{pr_number}: {str(e)}"
-        print(error_msg)
-        
+        logger.error(error_msg)
+        log_function_end(logger, "analyze_pr_task", success=False, 
+                        error=error_msg, exception_type=type(e).__name__)
         
         return {
-            "files": [],
-            "summary": {
-                "total_files": 0,
-                "total_issues": 0,
-                "critical_issues": 0
-            },
             "error": error_msg,
             "exception_type": type(e).__name__
         }
 
-def get_task_status(task_id: str):
+
+def get_task_status(task_id: str) -> dict:
+    
+    log_function_start(logger, "get_task_status", task_id=task_id)
     
     try:
         task_result = AsyncResult(task_id, app=celery_app)
@@ -102,19 +166,35 @@ def get_task_status(task_id: str):
         result = None
         if task_result.state == 'SUCCESS':
             result = task_result.get()
+            log_step(logger, "Task completed successfully")
         elif task_result.state == 'FAILURE':
-            # Access the exception information
             result = str(task_result.info)
+            log_step(logger, "Task failed", error=result)
+        elif task_result.state == 'PROGRESS':
+            result = task_result.info  
+            log_step(logger, "Task in progress", progress_info=result)
+        else:
+            log_step(logger, "Task in state", state=task_result.state)
 
-        return {
+        status_info = {
             "task_id": task_id,
             "status": task_result.state,
             "result": result
         }
+        
+        log_function_end(logger, "get_task_status", 
+                        task_status=task_result.state,
+                        has_result=bool(result))
+        
+        return status_info
+        
     except Exception as e:
-        print(f"Error getting task status for {task_id}: {e}")
+        error_msg = f"Error retrieving task status for {task_id}: {e}"
+        logger.error(error_msg)
+        log_function_end(logger, "get_task_status", success=False, error=error_msg)
+        
         return {
             "task_id": task_id,
             "status": "ERROR",
-            "result": f"Error retrieving task status: {str(e)}"
+            "result": error_msg
         }

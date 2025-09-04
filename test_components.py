@@ -11,13 +11,13 @@ def test_github_service():
         from github_service import get_pr_diff
         
         # Test with a public repository
-        repo_url = "https://github.com/octocat/Hello-World"
-        pr_number = 1
+        repo_url = "https://github.com/potpie-ai/potpie"
+        pr_number = 432
         
         print(f"Testing GitHub service with {repo_url} PR #{pr_number}")
         diff = get_pr_diff(repo_url, pr_number)
         print(f"Successfully fetched diff (length: {len(diff)})")
-        print(f"First 200 chars: {diff[:200]}...")
+        print(f"First 10000 chars: {diff[:10000]}...")
         return True
     except Exception as e:
         print(f"GitHub service test failed: {e}")

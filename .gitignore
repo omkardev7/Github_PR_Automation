@@ -1,3 +1,7 @@
 .env
 __pycache__
 venv
+logs
+test_components.py
+.pytest_cache
+test_code_review_agent.py
