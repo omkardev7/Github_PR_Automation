@@ -51,62 +51,172 @@ This project provides an **AI-powered multi-agent code review system** that anal
 - **Containerization**: Docker + Docker Compose
 
 ---
+## Configuration
 
-## 🔑 Environment Variables
+### Environment Variables
 
-Create a `.env` file in the root directory with the following:
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `GEMINI_API_KEY` | Google Gemini API key | Yes | - |
+| `GITHUB_TOKEN` | GitHub Personal Access Token | Yes | - |
+| `REDIS_URL` | Redis connection URL | No | `redis://localhost:6379/0` |
+| `LOG_LEVEL` | Logging level | No | `INFO` |
 
-```ini
-REDIS_URL=redis://redis:6379/0
-GEMINI_API_KEY=your_gemini_api_key_here
-GITHUB_TOKEN=your_github_personal_access_token_here
-````
+### GitHub Token Permissions
 
+Your GitHub token needs the following permissions:
+- `repo` (for private repositories)
+- `public_repo` (for public repositories)
+- `pull_requests:read`
+
+### Gemini API Setup
+
+1. Go to [Google AI Studio](https://makersuite.google.com/app/apikey)
+2. Create a new API key
+3. Add it to your `.env` file
 ---
 
-## 🐳 Running with Docker
+## Quick Start
+### Prerequisites
 
-Build and start services (Redis, Web, Worker):
+1. Docker setup
+2. GitHub Personal Access Token
+3. Google Gemini API Key
+
+### Installation & Setup
+
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/omkardev7/Github_PR_Automation.git
+   cd Github_PR_Automation
+   ```
+
+2. **Set up environment variables**
+  Create a `.env` file in the root directory with the following:
+
+    ```ini
+    REDIS_URL=redis://redis:6379/0
+    GEMINI_API_KEY=your_gemini_api_key_here
+    GITHUB_TOKEN=your_github_personal_access_token_here
+    ````
+  ####  🐳 Running with Docker
+  
+  - Build and start services (Redis, Web, Worker):
+  
+    ```bash
+    docker-compose up --build
+    ```
+  
+  - Services:
+  
+    * **Web API** → `http://localhost:8000`
+    * **Redis** → `localhost:6379`
+    * **Worker** → Celery background worker
+
+  ####  ▶️ Running Locally (without Docker)
+  
+  1. Install dependencies:
+  
+     ```bash
+     pip install -r requirements.txt
+     ```
+  
+  2. Start Redis (local or Docker):
+  
+     ```bash
+     redis-server
+     ```
+  
+  3. Start Celery worker:
+  
+     ```bash
+     celery -A worker.celery_app worker -P gevent --loglevel=info
+     ```
+  
+  4. Run FastAPI server:
+  
+     ```bash
+     python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+     ```
+  
+  ---
+
+
+## API Usage
+
+### Submit Analysis Request
 
 ```bash
-docker-compose up --build
+POST /analyze-pr
+Content-Type: application/json
+
+{
+  "repo_url": "https://github.com/owner/repo",
+  "pr_number": 123,
+  "github_token": "optional_token"
+}
 ```
 
-Services:
+**Response:**
+```json
+{
+  "task_id": "uuid-task-id",
+  "status": "PENDING"
+}
+```
 
-* **Web API** → `http://localhost:8000`
-* **Redis** → `localhost:6379`
-* **Worker** → Celery background worker
+### Check Task Status
+
+```bash
+GET /status/{task_id}
+```
+
+**Response:**
+```json
+{
+  "task_id": "uuid-task-id",
+  "status": "SUCCESS|PENDING|FAILURE"
+}
+```
+
+### Get Analysis Results
+
+```bash
+GET /results/{task_id}
+```
+
+**Response:**
+```json
+{
+  "task_id": "uuid-task-id",
+  "status": "COMPLETED",
+  "results": {
+    "files": [
+      {
+        "name": "path/to/file.py",
+        "issues": [
+          {
+            "type": "security|bug|performance|style",
+            "line": 42,
+            "description": "Issue description",
+            "suggestion": "How to fix it"
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "total_files": 5,
+      "total_issues": 12,
+      "critical_issues": 2
+    }
+  }
+}
+```
+
 
 ---
 
-## ▶️ Running Locally (without Docker)
-
-1. Install dependencies:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. Start Redis (local or Docker):
-
-   ```bash
-   docker run -d -p 6379:6379 redis:7
-   ```
-
-3. Start Celery worker:
-
-   ```bash
-   celery -A worker.celery_app worker -P gevent --loglevel=info
-   ```
-
-4. Run FastAPI server:
-
-   ```bash
-   uvicorn main:app --reload --host 0.0.0.0 --port 8000
-   ```
-
----
 
 ## 📡 API Endpoints
 
@@ -205,7 +315,7 @@ pytest -v test_api.py
 ---
 ## 🖥️ Example `cURL` Commands
 
-### Submit a PR for Analysis
+1. **Submit a PR for Analysis**
 
 ```bash
 curl -X POST http://localhost:8000/analyze-pr \
@@ -217,13 +327,13 @@ curl -X POST http://localhost:8000/analyze-pr \
       }'
 ```
 
-### Check Task Status
+2. **Check Task Status**
 
 ```bash
 curl http://localhost:8000/status/{task_id}
 ```
 
-### Get Analysis Results
+3. **Get Analysis Results**
 
 ```bash
 curl http://localhost:8000/results/{task_id}
@@ -243,6 +353,3 @@ curl http://localhost:8000/results/{task_id}
   * Errors with context
 
 ---
-
-
-
