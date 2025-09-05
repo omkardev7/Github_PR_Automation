@@ -143,84 +143,10 @@ Your GitHub token needs the following permissions:
   ---
 
 
-## API Usage
-
-### Submit Analysis Request
-
-```bash
-POST /analyze-pr
-Content-Type: application/json
-
-{
-  "repo_url": "https://github.com/owner/repo",
-  "pr_number": 123,
-  "github_token": "optional_token"
-}
-```
-
-**Response:**
-```json
-{
-  "task_id": "uuid-task-id",
-  "status": "PENDING"
-}
-```
-
-### Check Task Status
-
-```bash
-GET /status/{task_id}
-```
-
-**Response:**
-```json
-{
-  "task_id": "uuid-task-id",
-  "status": "SUCCESS|PENDING|FAILURE"
-}
-```
-
-### Get Analysis Results
-
-```bash
-GET /results/{task_id}
-```
-
-**Response:**
-```json
-{
-  "task_id": "uuid-task-id",
-  "status": "COMPLETED",
-  "results": {
-    "files": [
-      {
-        "name": "path/to/file.py",
-        "issues": [
-          {
-            "type": "security|bug|performance|style",
-            "line": 42,
-            "description": "Issue description",
-            "suggestion": "How to fix it"
-          }
-        ]
-      }
-    ],
-    "summary": {
-      "total_files": 5,
-      "total_issues": 12,
-      "critical_issues": 2
-    }
-  }
-}
-```
-
-
----
-
 
 ## 📡 API Endpoints
 
-### 1. **Analyze PR**
+### 1. **Analyze Pull Request**
 
 Submit a GitHub PR for analysis:
 
@@ -261,7 +187,7 @@ GET /status/{task_id}
 ```json
 {
   "task_id": "8e2d4e92-..",
-  "status": "SUCCESS"
+  "status": "PROGRESS"
 }
 ```
 
@@ -304,13 +230,47 @@ GET /results/{task_id}
 
 ---
 
-## 🧪 Running Tests
+## 🧪 Testing Instructions
 
-Run all API tests:
+Automated tests are included in `test_api.py`. They cover:
 
-```bash
-pytest -v test_api.py
-```
+1. **Valid payloads** → ensures `/analyze-pr` accepts correct inputs.
+2. **Invalid payloads** → checks for proper validation (`422` errors).
+3. **Task lifecycle** → submit PR → check `/status` → fetch `/results`.
+4. **Invalid task IDs** → verifies system handles non-existent tasks gracefully.
+
+### Running Tests
+
+1. Ensure Redis and the API server are running:
+   (manual):
+
+   ```bash
+   celery -A worker.celery_app worker -P gevent --loglevel=info &
+   uvicorn main:app --reload --host 0.0.0.0 --port 8000
+   ```
+
+2. Run tests with pytest:
+
+   ```bash
+   pytest -v test_api.py
+   ```
+
+3. Example output:
+
+   ```
+   test_api.py::test_analyze_pr[valid_payload0] PASSED
+   test_api.py::test_analyze_pr[valid_payload1] PASSED
+   test_api.py::test_analyze_pr[valid_payload2] PASSED
+   test_api.py::test_analyze_pr_invalid_payload PASSED
+   test_api.py::test_status_and_results_with_valid_task PASSED
+   test_api.py::test_status_with_invalid_task PASSED
+   test_api.py::test_results_with_invalid_task PASSED
+   ```
+   
+**What is Tested:**
+- ✅ /analyze-pr endpoint with valid and invalid payloads
+- ✅ /status/{task_id} with valid and invalid task IDs
+- ✅ /results/{task_id} for both valid and invalid task IDs
 
 ---
 ## 🖥️ Example `cURL` Commands
@@ -353,3 +313,19 @@ curl http://localhost:8000/results/{task_id}
   * Errors with context
 
 ---
+
+## 🛠️ Design Decisions
+
+- **FastAPI** chosen for high-performance async APIs.
+
+- **Celery** + **Redis** for distributed background task execution.
+
+- **CrewAI** multi-agent system for specialized code review tasks (bugs, style, security, performance).
+
+- **Pydantic** models for strict request/response validation.
+
+- Structured logging with start/end markers and contextual details.
+
+- **Docker** for consistent local & production deployment.
+
+- Config validation ensures required API keys exist (GEMINI_API_KEY, GITHUB_TOKEN).
